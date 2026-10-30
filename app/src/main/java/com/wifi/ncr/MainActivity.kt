@@ -11,11 +11,13 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.location.LocationManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -55,6 +57,7 @@ class MainActivity : Activity() {
     private var wifiReceiver: BroadcastReceiver? = null
 
     private var hackDurationSec = 8
+    private var uiScale = 1.0f
     private var hackLines = mutableListOf<String>()
     private var hackProgress = 0
     private var hackDone = false
@@ -96,8 +99,9 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun dp(v: Float): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics).toInt()
-    private fun sp(v: Float): Float = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
+    private fun dp(v: Float): Int = (TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics) * uiScale).toInt()
+    private fun sp(v: Float): Float = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics) * uiScale
+    
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
     private fun card(bg: Int = theme.card, radius: Float = 14f, strokeW: Float = 1f, strokeC: Int = theme.border): GradientDrawable =
@@ -110,6 +114,7 @@ class MainActivity : Activity() {
     private fun loadSettings() {
         val p = getSharedPreferences("wifi_pro", MODE_PRIVATE)
         hackDurationSec = p.getInt("duration", 8).coerceIn(2, 60)
+        uiScale = p.getFloat("ui_scale", 1.0f).coerceIn(0.6f, 1.5f)
         val tid = p.getString("theme", "green") ?: "green"
         theme = THEMES.firstOrNull { it.id == tid } ?: THEMES[0]
     }
@@ -117,47 +122,52 @@ class MainActivity : Activity() {
     private fun saveSettings() {
         getSharedPreferences("wifi_pro", MODE_PRIVATE).edit()
             .putInt("duration", hackDurationSec)
+            .putFloat("ui_scale", uiScale)
             .putString("theme", theme.id)
             .apply()
     }
 
+    private fun hasPermissions(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) return false
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return false
+        return true
+    }
+
     private fun requestPerms() {
         val needed = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED)
-                needed.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             needed.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
         if (needed.isNotEmpty()) requestPermissions(needed.toTypedArray(), PERM_REQ)
+    }
+
+    private fun isLocationEnabled(): Boolean {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        return lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
     }
 
     private fun reloadNetworks() {
         networks.clear()
-        val real = loadRealNetworks()
-        networks.addAll(if (real.isNotEmpty()) real else sampleNetworks())
-        networks.sortByDescending { it.level }
+        if (hasPermissions() && isLocationEnabled()) {
+            networks.addAll(loadRealNetworks())
+            networks.sortByDescending { it.level }
+        }
     }
 
     private fun loadRealNetworks(): List<WifiNetwork> {
         return try {
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return emptyList()
             val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             wm.scanResults.map {
-                WifiNetwork(if (it.SSID.isBlank()) "(hidden)" else it.SSID, it.BSSID ?: "", it.level, it.capabilities ?: "")
+                WifiNetwork(if (it.SSID.isBlank()) "(مخفي)" else it.SSID, it.BSSID ?: "", it.level, it.capabilities ?: "")
             }.filter { it.ssid.isNotBlank() }.distinctBy { it.ssid }
         } catch (_: Throwable) { emptyList() }
     }
 
-    private fun sampleNetworks() = listOf(
-        WifiNetwork("TP-LINK_11F8", "aa:bb:cc:11:22:01", -45, "[WPA2-PSK-CCMP][ESS]"),
-        WifiNetwork("Home_Network_5G", "aa:bb:cc:11:22:02", -52, "[WPA2-PSK-CCMP][ESS]"),
-        WifiNetwork("Office_Corp_WiFi", "aa:bb:cc:11:22:03", -58, "[WPA2-802.1X-CCMP][ESS]"),
-        WifiNetwork("CoffeeShop_Guest", "aa:bb:cc:11:22:04", -64, "[ESS]"),
-        WifiNetwork("Neighbor_2.4G", "aa:bb:cc:11:22:05", -71, "[WPA2-PSK-CCMP][ESS]")
-    )
-
     private fun registerWifiListener() {
+        if (!hasPermissions()) return
         wifiReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
         wifiReceiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, i: Intent?) {
@@ -196,9 +206,11 @@ class MainActivity : Activity() {
         val title = TextView(this).apply {
             text = "WiFi_N5CR4"
             setTextColor(theme.accent)
-            textSize = sp(22f)
+            textSize = sp(20f)
             typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
+            isSingleLine = true
+            ellipsize = TextUtils.TruncateAt.END
             setOnClickListener {
                 val now = System.currentTimeMillis()
                 tapCount = if (now - lastTapAt < 1500) tapCount + 1 else 1
@@ -211,13 +223,18 @@ class MainActivity : Activity() {
         topBar.addView(TextView(this).apply {
             text = "↻"
             setTextColor(theme.accent)
-            textSize = sp(24f)
+            textSize = sp(22f)
             setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
             setOnClickListener {
-                toast("جاري المسح...")
-                reloadNetworks()
-                registerWifiListener()
-                handler.postDelayed({ render() }, 600)
+                if (!hasPermissions()) requestPerms()
+                else if (!isLocationEnabled()) {
+                    toast("الرجاء تشغيل خدمات الموقع (GPS) لمسح الشبكات")
+                    startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                } else {
+                    toast("جاري المسح...")
+                    registerWifiListener()
+                    handler.postDelayed({ render() }, 1000)
+                }
             }
         })
 
@@ -226,10 +243,10 @@ class MainActivity : Activity() {
         val subtitle = TextView(this).apply {
             text = "الشبكات المتاحة (${networks.size})"
             setTextColor(theme.muted)
-            textSize = sp(13f)
+            textSize = sp(12f)
             setPadding(dp(20f), dp(4f), dp(20f), dp(8f))
         }
-        root.addView(subtitle, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP; topMargin = dp(76f) })
+        root.addView(subtitle, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP; topMargin = dp(70f) })
 
         val scroll = ScrollView(this)
         val listContainer = LinearLayout(this).apply {
@@ -237,11 +254,49 @@ class MainActivity : Activity() {
             setPadding(dp(12f), dp(4f), dp(12f), dp(24f))
         }
 
-        if (networks.isEmpty()) {
+        if (!hasPermissions()) {
             listContainer.addView(TextView(this).apply {
-                text = "لا توجد شبكات. اضغط ↻ للمسح."
+                text = "الرجاء منح صلاحية الموقع والـ Wi-Fi للمتابعة"
                 setTextColor(theme.muted)
-                textSize = sp(15f)
+                textSize = sp(14f)
+                gravity = Gravity.CENTER
+                setPadding(0, dp(48f), 0, dp(16f))
+            })
+            listContainer.addView(TextView(this).apply {
+                text = "منح الصلاحيات"
+                setTextColor(theme.bg)
+                textSize = sp(14f)
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply { setColor(theme.accent); cornerRadius = dp(10f).toFloat() }
+                setPadding(dp(20f), dp(12f), dp(20f), dp(12f))
+                isClickable = true
+                setOnClickListener { requestPerms() }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(32f); rightMargin = dp(32f) })
+        } else if (!isLocationEnabled()) {
+            listContainer.addView(TextView(this).apply {
+                text = "خدمات الموقع (GPS) مغلقة\nيجب تشغيلها لرؤية الشبكات"
+                setTextColor(theme.muted)
+                textSize = sp(14f)
+                gravity = Gravity.CENTER
+                setPadding(0, dp(48f), 0, dp(16f))
+            })
+            listContainer.addView(TextView(this).apply {
+                text = "فتح إعدادات الموقع"
+                setTextColor(theme.bg)
+                textSize = sp(14f)
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply { setColor(theme.accent); cornerRadius = dp(10f).toFloat() }
+                setPadding(dp(20f), dp(12f), dp(20f), dp(12f))
+                isClickable = true
+                setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(32f); rightMargin = dp(32f) })
+        } else if (networks.isEmpty()) {
+            listContainer.addView(TextView(this).apply {
+                text = "لا توجد شبكات قريبة. اضغط ↻ للمسح."
+                setTextColor(theme.muted)
+                textSize = sp(14f)
                 gravity = Gravity.CENTER
                 setPadding(0, dp(48f), 0, 0)
             })
@@ -250,7 +305,7 @@ class MainActivity : Activity() {
                 val row = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(16f), dp(16f), dp(16f), dp(16f))
+                    setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
                     background = card()
                     layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8f) }
                     isClickable = true
@@ -264,15 +319,17 @@ class MainActivity : Activity() {
                         else -> "▂"
                     }
                     setTextColor(if (n.level > -70) theme.accent else theme.muted)
-                    textSize = sp(16f)
-                    setPadding(0, 0, dp(12f), 0)
+                    textSize = sp(14f)
+                    setPadding(0, 0, dp(10f), 0)
                 })
                 val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
                 col.addView(TextView(this).apply {
                     text = n.ssid
                     setTextColor(theme.text)
-                    textSize = sp(16f)
+                    textSize = sp(14f)
                     typeface = Typeface.DEFAULT_BOLD
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
                 })
                 col.addView(TextView(this).apply {
                     text = when {
@@ -282,20 +339,22 @@ class MainActivity : Activity() {
                         else -> "مفتوح"
                     }
                     setTextColor(theme.muted)
-                    textSize = sp(12f)
+                    textSize = sp(11f)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
                     setPadding(0, dp(2f), 0, 0)
                 })
                 row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 row.addView(TextView(this).apply {
                     text = if (n.cap.contains("ESS]") && !n.cap.contains("WEP") && !n.cap.contains("WPA")) "🔓" else "🔒"
-                    textSize = sp(18f)
+                    textSize = sp(16f)
                 })
                 listContainer.addView(row)
             }
         }
 
         scroll.addView(listContainer)
-        root.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { topMargin = dp(108f); bottomMargin = dp(16f) })
+        root.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { topMargin = dp(96f); bottomMargin = dp(16f) })
     }
 
     private fun renderConnectOverlay() {
@@ -303,23 +362,25 @@ class MainActivity : Activity() {
         val overlay = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#B3000000")) }
         val modal = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20f), dp(24f), dp(20f), dp(16f))
-            background = GradientDrawable().apply { setColor(Color.parseColor("#1C1C1E")); cornerRadius = dp(20f).toFloat() }
+            setPadding(dp(20f), dp(20f), dp(20f), dp(16f))
+            background = GradientDrawable().apply { setColor(Color.parseColor("#1C1C1E")); cornerRadius = dp(16f).toFloat() }
         }
 
         modal.addView(TextView(this).apply {
             text = n.ssid
             setTextColor(Color.WHITE)
-            textSize = sp(22f)
+            textSize = sp(18f)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, dp(24f))
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, 0, 0, dp(20f))
         })
 
         modal.addView(TextView(this).apply {
             text = "كلمة المرور"
             setTextColor(Color.parseColor("#8E8E93"))
-            textSize = sp(12f)
+            textSize = sp(11f)
             setPadding(0, 0, 0, dp(6f))
         })
         modal.addView(EditText(this).apply {
@@ -328,15 +389,16 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             background = card(Color.parseColor("#2C2C2E"), 8f, 0f)
-            setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
-            textSize = sp(15f)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(20f) })
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            textSize = sp(14f)
+            maxLines = 1
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16f) })
 
         fun addOption(label: String, value: String, onClick: () -> Unit) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(16f), 0, dp(16f))
+                setPadding(0, dp(12f), 0, dp(12f))
                 isClickable = true
                 setOnClickListener { onClick() }
             }
@@ -344,19 +406,23 @@ class MainActivity : Activity() {
             col.addView(TextView(this).apply {
                 text = label
                 setTextColor(Color.WHITE)
-                textSize = sp(15f)
+                textSize = sp(14f)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
             })
             col.addView(TextView(this).apply {
                 text = value
                 setTextColor(Color.parseColor("#8E8E93"))
-                textSize = sp(13f)
+                textSize = sp(12f)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
                 setPadding(0, dp(2f), 0, 0)
             })
             row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(TextView(this).apply {
                 text = "‹"
                 setTextColor(Color.parseColor("#8E8E93"))
-                textSize = sp(20f)
+                textSize = sp(18f)
             })
             modal.addView(row)
         }
@@ -369,28 +435,28 @@ class MainActivity : Activity() {
         val btnRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, dp(24f), 0, 0)
+            setPadding(0, dp(20f), 0, 0)
         }
         btnRow.addView(TextView(this).apply {
             text = "إلغاء"
             setTextColor(Color.parseColor("#0A84FF"))
-            textSize = sp(16f)
-            setPadding(dp(24f), dp(12f), dp(24f), dp(12f))
+            textSize = sp(15f)
+            setPadding(dp(20f), dp(10f), dp(20f), dp(10f))
             isClickable = true
             setOnClickListener { screen = "list"; render() }
         })
         btnRow.addView(TextView(this).apply {
             text = "|"
             setTextColor(Color.parseColor("#3A3A3C"))
-            textSize = sp(16f)
-            setPadding(dp(8f), dp(12f), dp(8f), dp(12f))
+            textSize = sp(15f)
+            setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
         })
         btnRow.addView(TextView(this).apply {
             text = "اتصال"
             setTextColor(Color.parseColor("#0A84FF"))
-            textSize = sp(16f)
+            textSize = sp(15f)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(24f), dp(12f), dp(24f), dp(12f))
+            setPadding(dp(20f), dp(10f), dp(20f), dp(10f))
             isClickable = true
             setOnClickListener { startFakeHack() }
         })
@@ -413,7 +479,7 @@ class MainActivity : Activity() {
         topBar.addView(TextView(this).apply {
             text = "‹"
             setTextColor(theme.accent)
-            textSize = sp(28f)
+            textSize = sp(24f)
             setPadding(dp(8f), dp(4f), dp(16f), dp(4f))
             isClickable = true
             setOnClickListener { screen = "connect"; render() }
@@ -421,8 +487,10 @@ class MainActivity : Activity() {
         topBar.addView(TextView(this).apply {
             text = "الخصوصية المتقدمة — 24 خيار"
             setTextColor(theme.text)
-            textSize = sp(18f)
+            textSize = sp(16f)
             typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         overlay.addView(topBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP })
@@ -434,37 +502,21 @@ class MainActivity : Activity() {
         }
 
         val options = listOf(
-            "كشف كلمة المرور" to "reveal",
-            "سحب الاتصالات" to "pull",
-            "تشويش الإشارة" to "jam",
-            "اعتراض الحزم" to "intercept",
-            "تحليل الحزم" to "analyze",
-            "تفعيل MITM" to "mitm",
-            "حقن البيانات" to "inject",
-            "هجوم DDoS" to "ddos",
-            "اختراق WPS" to "wps",
-            "فتح المنافذ" to "ports",
-            "بروتوكول SSH" to "ssh",
-            "نسخ MAC" to "mac",
-            "تجاوز الحماية" to "bypass",
-            "إعادة التوجيه" to "redirect",
-            "تغيير DNS" to "dns",
-            "حقن إعلانات" to "ads",
-            "سجل التصفح" to "log",
-            "اختطاف الجلسة" to "session",
-            "تشفير الاتصال" to "encrypt",
-            "إخفاء الهوية" to "anonymize",
-            "مضاد التتبع" to "antitrack",
-            "تجاوز الجدار الناري" to "firewall",
-            "تفعيل VPN" to "vpn",
-            "حظر الأجهزة" to "block"
+            "كشف كلمة المرور" to "reveal", "سحب الاتصالات" to "pull", "تشويش الإشارة" to "jam",
+            "اعتراض الحزم" to "intercept", "تحليل الحزم" to "analyze", "تفعيل MITM" to "mitm",
+            "حقن البيانات" to "inject", "هجوم DDoS" to "ddos", "اختراق WPS" to "wps",
+            "فتح المنافذ" to "ports", "بروتوكول SSH" to "ssh", "نسخ MAC" to "mac",
+            "تجاوز الحماية" to "bypass", "إعادة التوجيه" to "redirect", "تغيير DNS" to "dns",
+            "حقن إعلانات" to "ads", "سجل التصفح" to "log", "اختطاف الجلسة" to "session",
+            "تشفير الاتصال" to "encrypt", "إخفاء الهوية" to "anonymize", "مضاد التتبع" to "antitrack",
+            "تجاوز الجدار الناري" to "firewall", "تفعيل VPN" to "vpn", "حظر الأجهزة" to "block"
         )
 
         for ((label, key) in options) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(16f), dp(14f), dp(16f), dp(14f))
+                setPadding(dp(14f), dp(12f), dp(14f), dp(12f))
                 background = card()
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) }
                 isClickable = true
@@ -478,19 +530,21 @@ class MainActivity : Activity() {
             row.addView(TextView(this).apply {
                 text = label
                 setTextColor(if (key == "reveal") theme.accent else theme.text)
-                textSize = sp(15f)
+                textSize = sp(14f)
                 typeface = if (key == "reveal") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             row.addView(TextView(this).apply {
                 text = "‹"
                 setTextColor(theme.muted)
-                textSize = sp(20f)
+                textSize = sp(18f)
             })
             list.addView(row)
         }
         scroll.addView(list)
-        overlay.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { topMargin = dp(72f) })
+        overlay.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { topMargin = dp(64f) })
 
         root.addView(overlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
@@ -561,7 +615,7 @@ class MainActivity : Activity() {
         container.addView(TextView(this).apply {
             text = ">> ATTACK VECTOR ACTIVE"
             setTextColor(theme.accent)
-            textSize = sp(14f)
+            textSize = sp(12f)
             typeface = Typeface.MONOSPACE
             setPadding(0, 0, 0, dp(8f))
         })
@@ -576,7 +630,7 @@ class MainActivity : Activity() {
         hackProgressText = TextView(this).apply {
             text = "0%"
             setTextColor(theme.muted)
-            textSize = sp(11f)
+            textSize = sp(10f)
             typeface = Typeface.MONOSPACE
             gravity = Gravity.END
             setPadding(0, dp(4f), 0, dp(8f))
@@ -594,7 +648,7 @@ class MainActivity : Activity() {
         hackTextView = TextView(this).apply {
             text = ""
             setTextColor(theme.accent)
-            textSize = sp(11f)
+            textSize = sp(10f)
             typeface = Typeface.MONOSPACE
             setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
         }
@@ -604,7 +658,7 @@ class MainActivity : Activity() {
         container.addView(TextView(this).apply {
             text = "> " + if (hackDone) "COMPLETE" else "RUNNING..."
             setTextColor(if (hackDone) theme.accent else theme.muted)
-            textSize = sp(12f)
+            textSize = sp(11f)
             typeface = Typeface.MONOSPACE
         })
 
@@ -620,13 +674,13 @@ class MainActivity : Activity() {
         container.addView(TextView(this).apply {
             text = "✔"
             setTextColor(theme.accent)
-            textSize = sp(80f)
+            textSize = sp(64f)
             gravity = Gravity.CENTER
         })
         container.addView(TextView(this).apply {
             text = "تم الاتصال بنجاح"
             setTextColor(theme.text)
-            textSize = sp(22f)
+            textSize = sp(20f)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setPadding(0, dp(16f), 0, dp(8f))
@@ -634,21 +688,21 @@ class MainActivity : Activity() {
         container.addView(TextView(this).apply {
             text = "يمكنك الآن استخدام الشبكة بحرية"
             setTextColor(theme.muted)
-            textSize = sp(14f)
+            textSize = sp(13f)
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, dp(32f))
         })
         container.addView(TextView(this).apply {
             text = "العودة"
             setTextColor(theme.bg)
-            textSize = sp(16f)
+            textSize = sp(15f)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 setColor(theme.accent)
-                cornerRadius = dp(12f).toFloat()
+                cornerRadius = dp(10f).toFloat()
             }
-            setPadding(dp(32f), dp(14f), dp(32f), dp(14f))
+            setPadding(dp(32f), dp(12f), dp(32f), dp(12f))
             isClickable = true
             setOnClickListener { screen = "list"; render() }
         })
@@ -665,20 +719,48 @@ class MainActivity : Activity() {
         container.addView(TextView(this).apply {
             text = "⚙ الإعدادات المتقدمة"
             setTextColor(theme.accent)
-            textSize = sp(20f)
+            textSize = sp(18f)
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, 0, 0, dp(24f))
         })
 
         container.addView(TextView(this).apply {
+            text = "حجم الواجهة:"
+            setTextColor(theme.text)
+            textSize = sp(13f)
+        })
+        val scaleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4f), 0, dp(16f))
+        }
+        val scales = listOf(0.8f to "صغير", 1.0f to "عادي", 1.2f to "كبير")
+        for ((s, name) in scales) {
+            scaleRow.addView(TextView(this).apply {
+                text = name
+                setTextColor(if (uiScale == s) theme.accent else theme.text)
+                textSize = sp(13f)
+                setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
+                background = card(theme.bg, 8f, if (uiScale == s) 2f else 0f, theme.accent)
+                isClickable = true
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(4f) }
+                setOnClickListener {
+                    uiScale = s
+                    saveSettings()
+                    render()
+                }
+            })
+        }
+        container.addView(scaleRow)
+
+        container.addView(TextView(this).apply {
             text = "مدة الاختراق الوهمي (ثانية):"
             setTextColor(theme.text)
-            textSize = sp(14f)
+            textSize = sp(13f)
         })
         container.addView(TextView(this).apply {
             text = hackDurationSec.toString()
             setTextColor(theme.accent)
-            textSize = sp(18f)
+            textSize = sp(16f)
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, dp(4f), 0, dp(12f))
         })
@@ -698,7 +780,7 @@ class MainActivity : Activity() {
         container.addView(TextView(this).apply {
             text = "الثيم:"
             setTextColor(theme.text)
-            textSize = sp(14f)
+            textSize = sp(13f)
             setPadding(0, dp(16f), 0, dp(8f))
         })
 
@@ -706,7 +788,7 @@ class MainActivity : Activity() {
             val row = TextView(this).apply {
                 text = t.name
                 setTextColor(if (t.id == theme.id) theme.accent else theme.text)
-                textSize = sp(15f)
+                textSize = sp(14f)
                 setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
                 background = card(theme.bg, 8f, if (t.id == theme.id) 2f else 0f, t.accent)
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) }
@@ -723,7 +805,7 @@ class MainActivity : Activity() {
         container.addView(TextView(this).apply {
             text = "إغلاق"
             setTextColor(theme.text)
-            textSize = sp(15f)
+            textSize = sp(14f)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             background = card(theme.bg, 10f, 1f, theme.muted)
