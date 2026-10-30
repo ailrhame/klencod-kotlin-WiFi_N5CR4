@@ -270,7 +270,7 @@ class MainActivity : Activity() {
 
     private fun scrollPage(): Pair<ScrollView, LinearLayout> {
         val scroll = ScrollView(this).apply {
-            fillViewport = true
+            isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
             layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
         }
