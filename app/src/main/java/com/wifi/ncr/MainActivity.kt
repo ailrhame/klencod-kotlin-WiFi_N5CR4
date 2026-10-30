@@ -36,9 +36,11 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.util.Random
 
-// ============================================================
-// [MODELS]
-// ============================================================
+private const val MATCH_PARENT = ViewGroup.LayoutParams.MATCH_PARENT
+private const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+
+private fun withAlpha(c: Int, a: Float): Int = (c and 0x00FFFFFF) or ((a * 255).toInt() shl 24)
+
 data class WifiNetwork(
     val ssid: String,
     val bssid: String,
@@ -48,9 +50,6 @@ data class WifiNetwork(
     val ipAddress: String = ""
 )
 
-// ============================================================
-// [CUSTOM VIEW — Signal Graph]
-// ============================================================
 class SignalWaveView(context: Context, private val accentColor: Int) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = accentColor
@@ -67,7 +66,7 @@ class SignalWaveView(context: Context, private val accentColor: Int) : View(cont
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (rssi < -90) return
-        val normalized = ((rssi + 100) / 50f).coerceIn(0f, 1f) // -100 to -50
+        val normalized = ((rssi + 100) / 50f).coerceIn(0f, 1f)
         val h = height.toFloat()
         val w = width.toFloat()
         path.reset()
@@ -83,13 +82,10 @@ class SignalWaveView(context: Context, private val accentColor: Int) : View(cont
     }
 }
 
-// ============================================================
-// [MAIN ACTIVITY]
-// ============================================================
 class MainActivity : Activity() {
     private val PERM_REQ = 101
     private lateinit var root: FrameLayout
-    private var screen = "home" // home, networks, analysis, settings, connect, privacy, hack, success, secret_settings
+    private var screen = "home"
     private var selectedNetwork: WifiNetwork? = null
     private var tapCount = 0
     private var lastTapAt = 0L
@@ -98,7 +94,6 @@ class MainActivity : Activity() {
     private var wifiReceiver: BroadcastReceiver? = null
     private var isRefreshing = false
 
-    // Hack State
     private var hackDurationSec = 8
     private var hackLines = mutableListOf<String>()
     private var hackProgress = 0
@@ -109,10 +104,8 @@ class MainActivity : Activity() {
     private lateinit var hackProgressBar: ProgressBar
     private lateinit var hackProgressText: TextView
 
-    // UI Scale
     private var uiScale = 1.0f
 
-    // Colors
     private val colorBg = Color.parseColor("#090D14")
     private val colorCard = Color.parseColor("#171F2B")
     private val colorGold = Color.parseColor("#D9B33E")
@@ -121,7 +114,7 @@ class MainActivity : Activity() {
 
     override fun attachBaseContext(newBase: Context) {
         val config = Configuration(newBase.resources.configuration)
-        config.fontScale = 1.0f // Force normal font scale to prevent blowup
+        config.fontScale = 1.0f
         super.attachBaseContext(newBase.createConfigurationContext(config))
     }
 
@@ -157,9 +150,6 @@ class MainActivity : Activity() {
         }
     }
 
-    // ============================================================
-    // [UTILS]
-    // ============================================================
     private fun dp(v: Float): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v * uiScale, resources.displayMetrics).toInt()
     private fun sp(v: Float): Float = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v * uiScale, resources.displayMetrics)
 
@@ -177,7 +167,7 @@ class MainActivity : Activity() {
             }
             elevation = dp(8f).toFloat()
         }
-        val params = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        val params = FrameLayout.LayoutParams(WRAP, WRAP).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             topMargin = dp(60f)
         }
@@ -285,14 +275,10 @@ class MainActivity : Activity() {
         } catch (_: Throwable) {}
     }
 
-    // ============================================================
-    // [RENDER DISPATCHER]
-    // ============================================================
     private fun render() {
         root.removeAllViews()
         root.setBackgroundColor(colorBg)
         
-        // Full screen overlays
         if (screen == "hack") {
             renderHack()
             return
@@ -300,12 +286,11 @@ class MainActivity : Activity() {
 
         val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
         }
 
-        // Content Area
         val contentFrame = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)
         }
 
         when (screen) {
@@ -317,22 +302,17 @@ class MainActivity : Activity() {
         }
         mainLayout.addView(contentFrame)
 
-        // Bottom Navigation
         if (screen in listOf("home", "networks", "analysis", "settings")) {
             mainLayout.addView(buildBottomNav())
         }
 
         root.addView(mainLayout)
 
-        // Modals / Overlays
         if (screen == "connect") root.addView(buildConnectOverlay())
         if (screen == "privacy") root.addView(buildPrivacyOverlay())
         if (screen == "secret_settings") root.addView(buildSecretSettingsOverlay())
     }
 
-    // ============================================================
-    // [SCREENS — HEADER & BOTTOM NAV]
-    // ============================================================
     private fun buildHeader(): View {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -367,7 +347,7 @@ class MainActivity : Activity() {
             setTextColor(colorMuted)
             textSize = sp(11f)
         })
-        header.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(titleCol, LinearLayout.LayoutParams(0, WRAP, 1f))
 
         val refreshBtn = TextView(this).apply {
             text = "⟳"
@@ -413,9 +393,9 @@ class MainActivity : Activity() {
             background = GradientDrawable().apply {
                 setColor(colorCard)
                 cornerRadius = dp(24f).toFloat()
-                setStroke(dp(1f), colorGold.copy(alpha = 0.2f))
+                setStroke(dp(1f), withAlpha(colorGold, 0.2f))
             }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP).apply {
                 leftMargin = dp(16f); rightMargin = dp(16f); bottomMargin = dp(16f)
             }
         }
@@ -433,7 +413,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 setPadding(0, dp(8f), 0, dp(8f))
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
                 isClickable = true
                 setOnClickListener {
                     if (screen != id) { screen = id; render() }
@@ -455,9 +435,6 @@ class MainActivity : Activity() {
         return nav
     }
 
-    // ============================================================
-    // [SCREEN: HOME]
-    // ============================================================
     private fun buildHomeScreen(): View {
         val scroll = ScrollView(this).apply { layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT) }
         val list = LinearLayout(this).apply {
@@ -467,11 +444,10 @@ class MainActivity : Activity() {
         
         list.addView(buildHeader())
 
-        // Connected Card
         val connCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20f), dp(20f), dp(20f), dp(20f))
-            background = cardBg(colorCard, 24f, 1.5f, colorGold.copy(alpha = 0.4f))
+            background = cardBg(colorCard, 24f, 1.5f, withAlpha(colorGold, 0.4f))
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP).apply { bottomMargin = dp(24f) }
         }
 
@@ -530,7 +506,6 @@ class MainActivity : Activity() {
         }
         list.addView(connCard)
 
-        // Near Networks Header
         list.addView(TextView(this).apply {
             text = "الشبكات القريبة"
             setTextColor(colorText)
@@ -539,7 +514,6 @@ class MainActivity : Activity() {
             setPadding(dp(8f), 0, 0, dp(12f))
         })
 
-        // Top 3 Networks
         if (networks.isEmpty()) {
             list.addView(buildEmptyState())
         } else {
@@ -563,9 +537,6 @@ class MainActivity : Activity() {
         return scroll
     }
 
-    // ============================================================
-    // [SCREEN: NETWORKS]
-    // ============================================================
     private fun buildNetworksScreen(): View {
         val scroll = ScrollView(this).apply { layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT) }
         val list = LinearLayout(this).apply {
@@ -645,7 +616,7 @@ class MainActivity : Activity() {
         card.addView(TextView(this).apply {
             text = if (n.cap.contains("ESS]") && !n.cap.contains("WEP") && !n.cap.contains("WPA")) "🔓" else "🔒"
             textSize = sp(16f)
-            setTextColor(colorGold.copy(alpha = 0.6f))
+            setTextColor(withAlpha(colorGold, 0.6f))
         })
 
         return card
@@ -679,9 +650,6 @@ class MainActivity : Activity() {
         return empty
     }
 
-    // ============================================================
-    // [SCREEN: ANALYSIS]
-    // ============================================================
     private fun buildAnalysisScreen(): View {
         val scroll = ScrollView(this).apply { layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT) }
         val list = LinearLayout(this).apply {
@@ -705,7 +673,7 @@ class MainActivity : Activity() {
         val graphCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20f), dp(20f), dp(20f), dp(20f))
-            background = cardBg(colorCard, 20f, 1f, colorGold.copy(alpha = 0.2f))
+            background = cardBg(colorCard, 20f, 1f, withAlpha(colorGold, 0.2f))
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP).apply { bottomMargin = dp(16f) }
         }
 
@@ -733,7 +701,7 @@ class MainActivity : Activity() {
         
         graphCard.addView(TextView(this).apply {
             text = when {
-                !connected -> ""
+                connected == null -> ""
                 targetRssi > -55 -> "ممتاز"
                 targetRssi > -65 -> "جيد جداً"
                 targetRssi > -75 -> "جيد"
@@ -750,9 +718,6 @@ class MainActivity : Activity() {
         return scroll
     }
 
-    // ============================================================
-    // [SCREEN: SETTINGS]
-    // ============================================================
     private fun buildSettingsScreen(): View {
         val scroll = ScrollView(this).apply { layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT) }
         val list = LinearLayout(this).apply {
@@ -783,9 +748,9 @@ class MainActivity : Activity() {
                 setTextColor(if (uiScale == s) colorGold else colorMuted)
                 textSize = sp(13f)
                 setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
-                background = cardBg(if (uiScale == s) colorGold.copy(alpha = 0.1f) else Color.TRANSPARENT, 8f, 1f, if (uiScale == s) colorGold else colorMuted)
+                background = cardBg(if (uiScale == s) withAlpha(colorGold, 0.1f) else Color.TRANSPARENT, 8f, 1f, if (uiScale == s) colorGold else colorMuted)
                 isClickable = true
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) }
+                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginEnd = dp(8f) }
                 setOnClickListener {
                     uiScale = s; saveSettings(); render()
                 }
@@ -810,9 +775,6 @@ class MainActivity : Activity() {
         return scroll
     }
 
-    // ============================================================
-    // [SCREEN: CONNECT OVERLAY]
-    // ============================================================
     private fun buildConnectOverlay(): View {
         val n = selectedNetwork ?: return View(this)
         val overlay = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#CC000000")) }
@@ -820,7 +782,7 @@ class MainActivity : Activity() {
         val modal = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24f), dp(24f), dp(24f), dp(16f))
-            background = cardBg(colorCard, 24f, 1.5f, colorGold.copy(alpha = 0.4f))
+            background = cardBg(colorCard, 24f, 1.5f, withAlpha(colorGold, 0.4f))
         }
 
         modal.addView(TextView(this).apply {
@@ -855,7 +817,7 @@ class MainActivity : Activity() {
             background = null
             textSize = sp(14f)
             setPadding(0, dp(12f), 0, dp(12f))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
         }
         inputRow.addView(et)
         inputRow.addView(TextView(this).apply {
@@ -871,7 +833,7 @@ class MainActivity : Activity() {
                 }
             }
         })
-        modal.addView(inputRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(24f) })
+        modal.addView(inputRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP).apply { bottomMargin = dp(24f) })
 
         fun addOption(label: String, value: String, onClick: () -> Unit) {
             val row = LinearLayout(this).apply {
@@ -897,7 +859,7 @@ class MainActivity : Activity() {
                 ellipsize = TextUtils.TruncateAt.END
                 setPadding(0, dp(2f), 0, 0)
             })
-            row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(col, LinearLayout.LayoutParams(0, WRAP, 1f))
             row.addView(TextView(this).apply {
                 text = "‹"
                 setTextColor(colorGold)
@@ -936,20 +898,17 @@ class MainActivity : Activity() {
             }
             isClickable = true
             setOnClickListener { startFakeHack() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(16f) })
+        }, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = dp(16f) })
         
         modal.addView(btnRow)
 
-        overlay.addView(modal, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        overlay.addView(modal, FrameLayout.LayoutParams(MATCH_PARENT, WRAP).apply {
             gravity = Gravity.CENTER
             leftMargin = dp(20f); rightMargin = dp(20f)
         })
         return overlay
     }
 
-    // ============================================================
-    // [SCREEN: PRIVACY OVERLAY]
-    // ============================================================
     private fun buildPrivacyOverlay(): View {
         val overlay = FrameLayout(this).apply { setBackgroundColor(colorBg) }
         
@@ -973,9 +932,9 @@ class MainActivity : Activity() {
             typeface = Typeface.DEFAULT_BOLD
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }, LinearLayout.LayoutParams(0, WRAP, 1f))
 
-        overlay.addView(topBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP })
+        overlay.addView(topBar, FrameLayout.LayoutParams(MATCH_PARENT, WRAP).apply { gravity = Gravity.TOP })
 
         val scroll = ScrollView(this)
         val list = LinearLayout(this).apply {
@@ -1016,7 +975,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(16f), dp(14f), dp(16f), dp(14f))
                 background = cardBg(colorCard, 12f)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) }
+                layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP).apply { bottomMargin = dp(6f) }
                 isClickable = true
                 setOnClickListener {
                     if (key == "reveal") startFakeHack() else {
@@ -1032,7 +991,7 @@ class MainActivity : Activity() {
                 typeface = if (key == "reveal") Typeface.DEFAULT_BOLD else Typeface.DEFAULT
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
             })
             row.addView(TextView(this).apply {
                 text = "‹"
@@ -1042,14 +1001,11 @@ class MainActivity : Activity() {
             list.addView(row)
         }
         scroll.addView(list)
-        overlay.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { topMargin = dp(96f) })
+        overlay.addView(scroll, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply { topMargin = dp(96f) })
 
         return overlay
     }
 
-    // ============================================================
-    // [SCREEN: FAKE HACK]
-    // ============================================================
     private fun startFakeHack() {
         hackLines.clear()
         hackProgress = 0
@@ -1127,7 +1083,7 @@ class MainActivity : Activity() {
         hackProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progressTintList = ColorStateList.valueOf(colorGold)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6f))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(6f))
         }
         container.addView(hackProgressBar)
 
@@ -1142,8 +1098,8 @@ class MainActivity : Activity() {
         container.addView(hackProgressText)
 
         hackTerminalScroll = ScrollView(this).apply {
-            background = cardBg(Color.parseColor("#0A0A0A"), 12f, 1.5f, colorGold.copy(alpha = 0.5f))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { bottomMargin = dp(12f) }
+            background = cardBg(Color.parseColor("#0A0A0A"), 12f, 1.5f, withAlpha(colorGold, 0.5f))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { bottomMargin = dp(12f) }
         }
         hackTextView = TextView(this).apply {
             text = ""
@@ -1166,9 +1122,6 @@ class MainActivity : Activity() {
         root.addView(container)
     }
 
-    // ============================================================
-    // [SCREEN: SUCCESS]
-    // ============================================================
     private fun buildSuccessScreen(): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1218,9 +1171,6 @@ class MainActivity : Activity() {
         return container
     }
 
-    // ============================================================
-    // [SCREEN: SECRET SETTINGS (5 Taps)]
-    // ============================================================
     private fun buildSecretSettingsOverlay(): View {
         val overlay = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#E6000000")) }
         
@@ -1254,14 +1204,14 @@ class MainActivity : Activity() {
             text = "زيادة +"
             setTextColor(colorGold)
             setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
-            background = cardBg(colorBg, 8f, 1f, colorGold.copy(alpha = 0.5f))
+            background = cardBg(colorBg, 8f, 1f, withAlpha(colorGold, 0.5f))
             isClickable = true
             setOnClickListener {
                 hackDurationSec = (hackDurationSec + 2).coerceAtMost(60)
                 saveSettings()
                 render()
             }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(24f) })
+        }, LinearLayout.LayoutParams(WRAP, WRAP).apply { bottomMargin = dp(24f) })
 
         modal.addView(TextView(this).apply {
             text = "إغلاق"
@@ -1272,20 +1222,17 @@ class MainActivity : Activity() {
             background = cardBg(colorBg, 10f, 1f, colorMuted)
             setPadding(0, dp(12f), 0, dp(12f))
             isClickable = true
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16f) }
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP).apply { topMargin = dp(16f) }
             setOnClickListener { screen = "home"; render() }
         })
 
-        overlay.addView(modal, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        overlay.addView(modal, FrameLayout.LayoutParams(MATCH_PARENT, WRAP).apply {
             gravity = Gravity.CENTER
             leftMargin = dp(20f); rightMargin = dp(20f)
         })
         return overlay
     }
 
-    // ============================================================
-    // [HELPERS]
-    // ============================================================
     private fun generateHackLine(): String {
         val rnd = Random()
         val prefixes = listOf("[*]", "[+]", "[-]", "[!]")
